@@ -1,77 +1,69 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed", terms: [] });
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { text, type } = req.body;
+  if (!text) {
+    return res.status(400).json({ error: "No text provided" });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return res.status(200).json({ error: "No API key", terms: [] });
+    return res.status(500).json({ error: "API key not configured" });
   }
 
-  const text = req.body?.text;
-  const type = req.body?.type;
-  if (!text) {
-    return res.status(200).json({ error: "No text", terms: [] });
-  }
-
-  var prompt;
+  let prompt;
   if (type === "comments") {
-    prompt = "You help high school students research colleges. A student added these comments:\n\n" + text + "\n\nDistill into 1-4 concise college search terms.\n\nRespond with ONLY a JSON array of strings. No explanation, no markdown. Example: [\"financial aid\", \"warm climate\"]";
+    prompt = `You help high school students from under-resourced communities research colleges. A student filled out a college fit questionnaire and added these open-ended comments:
+
+${text}
+
+Distill their comments into 1-4 concise, practical college search terms. These should be terms a student could type into Niche, CollegeBoard, or a college website. Think about what they really mean, even if they didn't say it cleanly. Skip anything too vague to be actionable.
+
+Return ONLY a JSON array of strings, no explanation. Example: ["need-based financial aid", "warm climate"]`;
   } else {
-    prompt = "You help high school students research colleges. A student said:\n\n\"" + text + "\"\n\nDistill into 1-4 concise college search terms. Think about what they really mean.\n\nRespond with ONLY a JSON array of strings. No explanation, no markdown. Example: [\"financial aid\", \"warm climate\"]";
+    prompt = `You help high school students from under-resourced communities research colleges. A student just told you what else matters to them:
+
+"${text}"
+
+Distill this into 1-4 concise, practical college search terms a student could type into Niche, CollegeBoard, or a college website. Think about what they really mean:
+- "I don't want to feel like a number" -> "small class sizes"
+- "My family can't help me pay" -> "generous financial aid"
+- "I want somewhere warm where people are chill" -> "warm climate", "laid-back campus culture"
+
+Return ONLY a JSON array of strings. Example: ["need-based financial aid", "warm climate"]`;
   }
 
   try {
-    var body = {
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 300,
-      messages: [{ role: "user", content: prompt }]
-    };
-
-    var response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
+        "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }],
+      }),
     });
 
+    const data = await response.json();
+    
     if (!response.ok) {
-      var errText = await response.text();
-      return res.status(200).json({ error: "API " + response.status + ": " + errText.substring(0, 300), terms: [] });
+      console.error("Anthropic API Error:", data);
+      return res.status(500).json({ error: data.error?.message || "Error from Anthropic API" });
     }
 
-    var data = await response.json();
-    var raw = "";
-    if (data.content && data.content.length > 0 && data.content[0].text) {
-      raw = data.content[0].text;
-    }
+    const raw = data.content?.[0]?.text || "[]";
+    const clean = raw.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
 
-    if (!raw) {
-      return res.status(200).json({ error: "Empty response from Claude", terms: [] });
-    }
-
-    var clean = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-
-    try {
-      var arr = JSON.parse(clean);
-      if (Array.isArray(arr)) {
-        return res.status(200).json({ terms: arr });
-      }
-      return res.status(200).json({ terms: [] });
-    } catch (parseErr) {
-      var match = clean.match(/\[[\s\S]*\]/);
-      if (match) {
-        var arr2 = JSON.parse(match[0]);
-        if (Array.isArray(arr2)) {
-          return res.status(200).json({ terms: arr2 });
-        }
-      }
-      return res.status(200).json({ error: "Parse failed: " + clean.substring(0, 100), terms: [] });
-    }
+    return res.status(200).json(parsed);
   } catch (err) {
-    return res.status(200).json({ error: "Server error: " + err.message, terms: [] });
+    console.error("Anthropic API error:", err);
+    return res.status(500).json({ error: err.message });
   }
 }
