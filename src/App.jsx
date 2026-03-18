@@ -631,20 +631,19 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
           body: JSON.stringify({ text: bits.join("\n"), type: "comments" })
         });
         setDebugStatus("API responded: " + response.status);
-        const parsed = await response.json();
-        setDebugStatus("Parsed response: " + JSON.stringify(parsed).substring(0, 200));
-        const terms = Array.isArray(parsed) ? parsed : (parsed?.terms || parsed?.data || []);
-        if (Array.isArray(terms) && terms.length > 0) {
+        const data = await response.json();
+        const terms = data?.terms || (Array.isArray(data) ? data : []);
+        const err = data?.error;
+        if (err) setDebugStatus("API note: " + err);
+        if (terms.length > 0) {
           const newTerms = terms.filter(t => typeof t === "string" && t.trim()).map(term => ({ term: term.trim(), maxImportance: 2, isMultiPick: false, source: "your comments", sectionTitle: "Other" }));
           if (newTerms.length > 0) {
             setAiTerms(prev => [...prev, ...newTerms]);
             setAutoCount(newTerms.length);
             setDebugStatus("Added " + newTerms.length + " terms: " + newTerms.map(t => t.term).join(", "));
-          } else {
-            setDebugStatus("No valid string terms found in response");
           }
-        } else {
-          setDebugStatus("Response was not a valid array: " + typeof terms + " / " + JSON.stringify(parsed).substring(0, 100));
+        } else if (!err) {
+          setDebugStatus("No terms generated from comments");
         }
       } catch (err) {
         setDebugStatus("Error: " + err.message);
@@ -663,13 +662,14 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: extraText.trim(), type: "extra" })
       });
-      const parsed = await response.json();
-      const terms = Array.isArray(parsed) ? parsed : (parsed?.terms || parsed?.data || []);
-      if (Array.isArray(terms) && terms.length > 0) {
+      const data = await response.json();
+      const terms = data?.terms || (Array.isArray(data) ? data : []);
+      if (terms.length > 0) {
         const newTerms = terms.filter(t => typeof t === "string" && t.trim()).map(term => ({ term: term.trim(), maxImportance: 2, isMultiPick: false, source: "your notes", sectionTitle: "Other" }));
         if (newTerms.length > 0) {
           setAiTerms(prev => [...prev, ...newTerms]);
           setAutoCount(prev => prev + newTerms.length);
+          setDebugStatus(prev => prev + " | Manual: added " + newTerms.length + " terms");
         }
       }
     } catch (err) { console.error("AI error:", err); }
@@ -730,7 +730,7 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
           {loading ? "Thinking..." : "Suggest search terms from this"}
         </button>
       )}
-      {done && (
+      {done && autoCount > 0 && (
         <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "var(--leda-green)", fontWeight: 600, marginTop: 10 }}>
           Added search terms — you'll see them on the next page!
         </p>
