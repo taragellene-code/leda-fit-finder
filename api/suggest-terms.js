@@ -44,7 +44,7 @@ Return ONLY a JSON array of strings. Example: ["need-based financial aid", "warm
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-3-haiku-20240307",
         max_tokens: 1000,
         messages: [{ role: "user", content: prompt }],
       }),
@@ -54,7 +54,7 @@ Return ONLY a JSON array of strings. Example: ["need-based financial aid", "warm
     
     if (!response.ok) {
       console.error("Anthropic API Error:", data);
-      return res.status(500).json({ error: data.error?.message || "Error from Anthropic API" });
+      return res.status(500).json({ error: `Anthropic Error: ${data.error?.message || "Unknown error"}` });
     }
 
     const raw = data.content?.[0]?.text || "[]";
@@ -63,6 +63,10 @@ Return ONLY a JSON array of strings. Example: ["need-based financial aid", "warm
 
     return res.status(200).json(parsed);
   } catch (err) {
+    console.error("Anthropic API error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
     console.error("Anthropic API error:", err);
     return res.status(500).json({ error: err.message });
   }
