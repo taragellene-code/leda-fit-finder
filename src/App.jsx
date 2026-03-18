@@ -561,16 +561,9 @@ function collectAllTerms(answers, importanceRatings, textInputs) {
           const userText = textInputs[opt.id]?.trim();
 
           if (opt.hasTextInput && userText) {
-            // 7a (affinity) is processed by AI on the Reflect page
+            // 7a (affinity) is processed by AI on the Reflect page — skip generic term
             if (opt.id === "7a") {
-              const staticTerms = (opt.searchTerms || []).filter(t => !t.startsWith("["));
-              if (staticTerms.length > 0) {
-                const combined = staticTerms.join(" / ");
-                if (!seenTerms.has(combined.toLowerCase())) {
-                  seenTerms.add(combined.toLowerCase());
-                  allTerms.push({ term: combined, maxImportance: importance, isMultiPick, source: opt.label, sectionTitle: section.title });
-                }
-              }
+              // Don't add anything — AI will generate specific terms
             } else {
               const dynamicTerm = opt.id === "1a"
                 ? `driving distance from ${userText}`
@@ -609,26 +602,27 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
   const [autoProcessed, setAutoProcessed] = useState(false);
   const [autoCount, setAutoCount] = useState(0);
 
+  const [debugStatus, setDebugStatus] = useState("");
+
   // Auto-process earlier open responses on mount
   useEffect(() => {
     if (autoProcessed) return;
     const bits = [];
-    // otherComments from section textareas
     Object.entries(otherComments || {}).forEach(([sectionId, text]) => {
       if (text.trim()) {
         const section = SECTIONS.find(s => s.id === sectionId);
         bits.push(`About ${section?.title || sectionId}: "${text.trim()}"`);
       }
     });
-    // textInputs that are open-ended (affinity, etc.) - but not region/major which already generate terms
-    const specialInputs = { "7a": "affinity/identity needs", "1a": "home location" };
+    const specialInputs = { "7a": "affinity/identity needs" };
     Object.entries(textInputs || {}).forEach(([optId, text]) => {
       if (text.trim() && specialInputs[optId]) {
         bits.push(`About ${specialInputs[optId]}: "${text.trim()}"`);
       }
     });
-    if (bits.length === 0) { setAutoProcessed(true); return; }
+    if (bits.length === 0) { setAutoProcessed(true); setDebugStatus("No comments to process"); return; }
     setLoading(true);
+    setDebugStatus("Found " + bits.length + " comment(s), calling AI...");
     (async () => {
       try {
         const response = await fetch("/api/suggest-terms", {
@@ -636,12 +630,25 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: bits.join("\n"), type: "comments" })
         });
+        setDebugStatus("API responded: " + response.status);
         const parsed = await response.json();
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setAiTerms(prev => [...prev, ...parsed.map(term => ({ term, maxImportance: 2, isMultiPick: false, source: "your comments", sectionTitle: "Other" }))]);
-          setAutoCount(parsed.length);
+        setDebugStatus("Parsed response: " + JSON.stringify(parsed).substring(0, 200));
+        const terms = Array.isArray(parsed) ? parsed : (parsed?.terms || parsed?.data || []);
+        if (Array.isArray(terms) && terms.length > 0) {
+          const newTerms = terms.filter(t => typeof t === "string" && t.trim()).map(term => ({ term: term.trim(), maxImportance: 2, isMultiPick: false, source: "your comments", sectionTitle: "Other" }));
+          if (newTerms.length > 0) {
+            setAiTerms(prev => [...prev, ...newTerms]);
+            setAutoCount(newTerms.length);
+            setDebugStatus("Added " + newTerms.length + " terms: " + newTerms.map(t => t.term).join(", "));
+          } else {
+            setDebugStatus("No valid string terms found in response");
+          }
+        } else {
+          setDebugStatus("Response was not a valid array: " + typeof terms + " / " + JSON.stringify(parsed).substring(0, 100));
         }
-      } catch (err) { console.error("Auto-process error:", err); }
+      } catch (err) {
+        setDebugStatus("Error: " + err.message);
+      }
       setLoading(false);
       setAutoProcessed(true);
     })();
@@ -657,9 +664,13 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
         body: JSON.stringify({ text: extraText.trim(), type: "extra" })
       });
       const parsed = await response.json();
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        setAiTerms(prev => [...prev, ...parsed.map(term => ({ term, maxImportance: 2, isMultiPick: false, source: "your notes", sectionTitle: "Other" }))]);
-        setAutoCount(prev => prev + parsed.length);
+      const terms = Array.isArray(parsed) ? parsed : (parsed?.terms || parsed?.data || []);
+      if (Array.isArray(terms) && terms.length > 0) {
+        const newTerms = terms.filter(t => typeof t === "string" && t.trim()).map(term => ({ term: term.trim(), maxImportance: 2, isMultiPick: false, source: "your notes", sectionTitle: "Other" }));
+        if (newTerms.length > 0) {
+          setAiTerms(prev => [...prev, ...newTerms]);
+          setAutoCount(prev => prev + newTerms.length);
+        }
       }
     } catch (err) { console.error("AI error:", err); }
     setLoading(false);
@@ -677,6 +688,16 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
           Is there anything else you need in a college that we didn't ask about? Don't worry about using the "right" words — just tell us what matters to you.
         </p>
       </div>
+
+      {debugStatus && (
+        <div style={{
+          padding: "8px 12px", borderRadius: 8, background: "#F3F4F6",
+          marginBottom: 12, fontFamily: "monospace", fontSize: 11, color: "#6b7280",
+          wordBreak: "break-all",
+        }}>
+          Debug: {debugStatus}
+        </div>
+      )}
 
       {autoCount > 0 && !loading && (
         <div style={{
@@ -709,9 +730,9 @@ function Reflect({ otherComments, textInputs, answers, importanceRatings, aiTerm
           {loading ? "Thinking..." : "Suggest search terms from this"}
         </button>
       )}
-      {done && aiTerms.length > 0 && (
+      {done && (
         <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "var(--leda-green)", fontWeight: 600, marginTop: 10 }}>
-          Added new search terms based on what you wrote — you'll see them on the next page!
+          Added search terms — you'll see them on the next page!
         </p>
       )}
       {loading && !done && (
